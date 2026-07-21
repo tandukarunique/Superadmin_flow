@@ -1,0 +1,33 @@
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
+from time import sleep
+
+
+
+
+class SuspendedOrgPage():
+    EMAIL = (By.ID, "email")
+    PASSWORD = (By.ID, "password")
+    LOGIN = (By.XPATH, "//button[contains(., 'Login to Dashboard')]")
+    
+    def __init__(self, driver):
+        self.driver = driver
+        self.wait = WebDriverWait(driver, 10)
+    
+    def go_to_chatboq(self):
+        
+        self.driver.get("https://uat.chatboq.com")
+        return self
+    
+    def login(self):
+        email = self.wait.until(EC.element_to_be_clickable(self.EMAIL))
+        email.send_keys("uniquetandukar8645@gmail.com")
+        
+        password = self.wait.until(EC.element_to_be_clickable(self.PASSWORD))
+        password.send_keys("Tha cha 098!")
+        sleep(2)
+        
+        self.wait.until(EC.element_to_be_clickable(self.LOGIN)).click()
+        
+        

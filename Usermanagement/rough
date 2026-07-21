@@ -1,0 +1,525 @@
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options as ChromeOptions
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from time import sleep
+from selenium.webdriver.common.keys import Keys
+import random
+import re
+import string
+import time
+import os
+import requests
+import speech_recognition as sr
+from pydub import AudioSegment
+import io
+
+
+class Email():
+    EMAIL_URL = "https://www.guerrillamail.com/inbox"
+    EMAIL_NAME = (By.ID, "inbox-id")
+    EMAIL_INPUT = (By.CSS_SELECTOR, "span#inbox-id input, input#inbox-id")
+    EMAIL_SET_BUTTON = (By.XPATH, "//button[contains(., 'Set') or contains(., 'Save')]")
+    CHECKBOX = (By.ID, "use-alias")
+    INVITE_BTN = (By.XPATH, "//button[contains(., 'Invite User')]")
+    EMAIL_PLACEHOLDER = (By.XPATH, "//input[contains(@placeholder, 'Enter email')]")
+    EMAIL_COPY = (By.ID, "email-widget")
+    SELECT_ROLE = (By.XPATH, "//button[contains(., 'Select an option')]")
+    SELECT_ADMINISTRATOR = (By.XPATH, "//span[contains(., 'Administrator')]")
+    SEND_INVITE = (By.XPATH, "(//button[contains(., 'Invite User')])[2]")
+    ACCEPT_INVITE_BTN = (
+        By.XPATH,
+        "//button[contains(., 'Accept') or contains(., 'Continue') or contains(., 'Join')]"
+        " | //a[contains(., 'Accept') or contains(., 'Continue') or contains(., 'Join')]",
+    )
+    FIRST_NAME_INPUT = (By.XPATH, "//input[contains(translate(@name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'first') or contains(translate(@id, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'first') or contains(translate(@placeholder, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'first')]")
+    LAST_NAME_INPUT = (By.XPATH, "//input[contains(translate(@name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'last') or contains(translate(@id, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'last') or contains(translate(@placeholder, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'last')]")
+    PASSWORD_INPUTS = (By.XPATH, "//input[@type='password']")
+    CREATE_USER_BTN = (
+        By.XPATH,
+        "//button[contains(., 'Create') or contains(., 'Submit') or contains(., 'Continue') or contains(., 'Accept')]",
+    )
+
+    def __init__(self, driver):
+        self.driver = driver
+        self.wait = WebDriverWait(driver, 10)
+        self.click = lambda locator: self.wait.until(EC.element_to_be_clickable(locator)).click()
+
+        # separate incognito driver, created on demand in openmail()
+        self.mail_driver = None
+        self.mail_wait = None
+        self.mail_click = None
+
+    def openmail(self):
+        options = ChromeOptions()
+        options.add_argument("--incognito")
+        options.add_argument("--start-maximized")
+        
+        # Add options to avoid detection
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option('useAutomationExtension', False)
+
+        self.mail_driver = webdriver.Chrome(options=options)
+        self.mail_wait = WebDriverWait(self.mail_driver, 10)
+        self.mail_click = lambda locator: self.mail_wait.until(
+            EC.element_to_be_clickable(locator)
+        ).click()
+
+        self.mail_driver.get(self.EMAIL_URL)
+        sleep(3)
+
+    def quit_mail(self):
+        if self.mail_driver:
+            self.mail_driver.quit()
+            self.mail_driver = None
+            self.mail_wait = None
+            self.mail_click = None
+
+    def random_email_name(self):
+        random_letters = "".join(random.choices(string.ascii_lowercase, k=7))
+        return f"abc{random_letters}"
+
+    def set_random_email(self):
+        email_name = self.random_email_name()
+        self.openmail()
+
+        name_area = self.mail_wait.until(EC.element_to_be_clickable(self.EMAIL_NAME))
+        name_area.click()
+
+        email_input = self.mail_wait.until(EC.element_to_be_clickable(self.EMAIL_INPUT))
+        email_input.send_keys(Keys.CONTROL, "a")
+        email_input.send_keys(email_name)
+
+        try:
+            self.mail_click(self.EMAIL_SET_BUTTON)
+        except TimeoutException:
+            email_input.send_keys(Keys.ENTER)
+
+        sleep(2)
+        self.mail_click(self.CHECKBOX)
+        sleep(1)
+
+        self.email_address = self.get_displayed_email(email_name)
+        print(f"[email] ✅ Email set: {self.email_address}")
+        return self.email_address
+
+    def get_displayed_email(self, fallback_name):
+        email_widget = self.mail_wait.until(EC.visibility_of_element_located(self.EMAIL_COPY))
+        email_text = email_widget.text.strip()
+        if not email_text:
+            email_text = self.mail_driver.execute_script(
+                "return arguments[0].innerText || arguments[0].textContent || arguments[0].value || '';",
+                email_widget,
+            )
+
+        match = re.search(r"[\w.+-]+@[\w.-]+\.\w+", email_text or "")
+        if match:
+            return match.group(0)
+        return f"{fallback_name}@guerrillamail.com"
+
+    def paste_email(self, element, email):
+        element.click()
+        element.send_keys(Keys.CONTROL, "a")
+        element.send_keys(Keys.DELETE)
+        element.send_keys(email)
+
+        if element.get_attribute("value") == email:
+            return
+
+        self.driver.execute_script("""
+            const input = arguments[0];
+            const value = arguments[1];
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+            setter.call(input, value);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        """, element, email)
+
+    def set_input_value(self, element, value, driver=None):
+        driver = driver or self.driver
+        element.click()
+        element.send_keys(Keys.CONTROL, "a")
+        element.send_keys(Keys.DELETE)
+        element.send_keys(value)
+
+        if element.get_attribute("value") == value:
+            return
+
+        driver.execute_script("""
+            const input = arguments[0];
+            const value = arguments[1];
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+            setter.call(input, value);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        """, element, value)
+
+    def random_name(self, prefix):
+        random_letters = "".join(random.choices(string.ascii_lowercase, k=6))
+        return f"{prefix}{random_letters}".title()
+
+    def invite_user(self):
+        if not getattr(self, "email_address", None):
+            raise RuntimeError("Email is not ready....")
+
+        self.click(self.INVITE_BTN)
+        sleep(0.5)
+
+        email_input = self.wait.until(EC.element_to_be_clickable(self.EMAIL_PLACEHOLDER))
+        self.paste_email(email_input, self.email_address)
+        print(f"[email] ✅ Invite email pasted: {self.email_address}")
+        return self.email_address
+
+    def select_role(self):
+        self.click(self.SELECT_ROLE)
+        sleep(1)
+        self.click(self.SELECT_ADMINISTRATOR)
+        sleep(2)
+        self.click(self.SEND_INVITE)
+        sleep(2)
+
+    def wait_for_invitation_email(self, timeout_seconds=90):
+        expected_sender = "noreply@chatboq.com"
+        expected_subject = "Invitation to Join Chatboq SuperAdmin"
+        print(f"[email] waiting for invitation email from {expected_sender}...")
+        start = time.time()
+
+        while (time.time() - start) < timeout_seconds:
+            try:
+                self.mail_driver.execute_script(
+                    "if (typeof GRML !== 'undefined') { GRML.check_email(); }"
+                )
+                sleep(2)
+
+                target_row = self.mail_driver.execute_script(
+                    "var rows = document.querySelectorAll('#email_list tr.mail_row, tr.mail_row, .mail_row');"
+                    "for (var i = 0; i < rows.length; i++) {"
+                    "  var row = rows[i];"
+                    "  var text = row.innerText.toLowerCase();"
+                    "  var sender = (row.querySelector('.td2, td:nth-child(2)')?.innerText || '').toLowerCase();"
+                    "  var subject = (row.querySelector('.td3, td:nth-child(3)')?.innerText || '').toLowerCase();"
+                    "  var senderMatches = sender.includes(arguments[0]) || text.includes(arguments[0]);"
+                    "  var subjectMatches = subject.includes(arguments[1]) || text.includes(arguments[1]);"
+                    "  if (senderMatches && subjectMatches) {"
+                    "    return rows[i];"
+                    "  }"
+                    "}"
+                    "return null;",
+                    expected_sender.lower(),
+                    expected_subject.lower(),
+                )
+
+                if target_row is not None:
+                    print(f"[email] found invitation email: {expected_subject}")
+                    self.mail_driver.execute_script("arguments[0].click();", target_row)
+                    sleep(2)
+                    return True
+
+                print("[email] not found yet, retrying...")
+                sleep(3)
+
+            except Exception as e:
+                print(f"[email] error checking inbox: {e}")
+                sleep(2)
+
+        print("[email] timeout - invitation email not found")
+        return False
+
+    def find_invitation_url(self):
+        sleep(5)
+
+        return self.mail_driver.execute_script("""
+            const docs = [document];
+            for (const frame of document.querySelectorAll('iframe')) {
+                try {
+                    if (frame.contentDocument) docs.push(frame.contentDocument);
+                } catch (e) {}
+            }
+
+            for (const doc of docs) {
+                for (const link of doc.querySelectorAll('a[href], #display_email a[href], .email_body a[href], .mail_body a[href]')) {
+                    const href = link.href || '';
+                    const text = (link.innerText || '').toLowerCase();
+                    if (
+                        href.includes('chatboq') ||
+                        href.includes('invite') ||
+                        href.includes('invitation') ||
+                        href.includes('token') ||
+                        text.includes('accept') ||
+                        text.includes('join')
+                    ) {
+                        return href;
+                    }
+                }
+
+                const bodyText = doc.body ? doc.body.innerText : '';
+                const match = bodyText.match(/https?:\\/\\/\\S*(?:chatboq|invite|invitation|token)\\S*/i);
+                if (match) return match[0].replace(/[\\])}.,;]+$/, '');
+            }
+
+            return null;
+        """)
+
+    def accept_invite(self):
+        if not self.wait_for_invitation_email():
+            raise RuntimeError("Invitation email never arrived")
+
+        windows_before = set(self.mail_driver.window_handles)
+        invitation_url = self.find_invitation_url()
+        if not invitation_url:
+            raise RuntimeError("Invitation email opened, but no invitation link was found")
+
+        self.mail_driver.execute_script("window.open(arguments[0], '_blank');", invitation_url)
+        print(f"[email] opened invitation link: {invitation_url}")
+        sleep(2)
+
+        wait_start = time.time()
+        while time.time() - wait_start < 10:
+            new_windows = set(self.mail_driver.window_handles) - windows_before
+            if new_windows:
+                self.mail_driver.switch_to.window(next(iter(new_windows)))
+                print(f"[email] switched to new tab: {self.mail_driver.current_url}")
+                break
+            sleep(0.5)
+        else:
+            self.mail_driver.switch_to.window(self.mail_driver.window_handles[-1])
+
+        sleep(2)
+        self.create_invited_user()
+        return True
+
+    # ============ RECAPTCHA SOLVER USING SELENIUM ============
+    
+    def solve_recaptcha(self, driver):
+        """
+        Solve reCAPTCHA v2 using audio challenge with Selenium
+        """
+        try:
+            print("[captcha] Starting reCAPTCHA solving process...")
+            
+            # Step 1: Find and click the reCAPTCHA checkbox
+            self.click_recaptcha_checkbox(driver)
+            
+            # Step 2: Check if we need to solve audio challenge
+            if self.is_audio_challenge_present(driver):
+                print("[captcha] Audio challenge detected, solving...")
+                return self.solve_audio_challenge(driver)
+            else:
+                print("[captcha] ✅ reCAPTCHA solved successfully (checkbox only)!")
+                return True
+                
+        except Exception as e:
+            print(f"[captcha] ❌ Failed to solve reCAPTCHA: {e}")
+            return False
+
+    def click_recaptcha_checkbox(self, driver):
+        """
+        Click the reCAPTCHA checkbox
+        """
+        try:
+            # Switch to the reCAPTCHA iframe
+            iframe = driver.find_element(By.XPATH, "//iframe[contains(@src, 'recaptcha/api2/anchor')]")
+            driver.switch_to.frame(iframe)
+            
+            # Click the checkbox
+            checkbox = driver.find_element(By.ID, "recaptcha-anchor")
+            checkbox.click()
+            print("[captcha] Clicked reCAPTCHA checkbox")
+            
+            # Switch back to default content
+            driver.switch_to.default_content()
+            sleep(2)
+            
+        except Exception as e:
+            driver.switch_to.default_content()
+            raise Exception(f"Failed to click checkbox: {e}")
+
+    def is_audio_challenge_present(self, driver):
+        """
+        Check if audio challenge is present (reCAPTCHA v2 with challenge)
+        """
+        try:
+            # Check for audio challenge iframe
+            iframes = driver.find_elements(By.XPATH, "//iframe[contains(@src, 'recaptcha/api2/bframe')]")
+            if iframes:
+                return True
+            
+            # Check for audio button
+            driver.switch_to.frame(iframes[0])
+            audio_btn = driver.find_elements(By.ID, "recaptcha-audio-button")
+            driver.switch_to.default_content()
+            return bool(audio_btn)
+            
+        except:
+            return False
+
+    def solve_audio_challenge(self, driver):
+        """
+        Solve reCAPTCHA using audio challenge
+        """
+        try:
+            # Step 1: Switch to challenge iframe
+            iframe = driver.find_element(By.XPATH, "//iframe[contains(@src, 'recaptcha/api2/bframe')]")
+            driver.switch_to.frame(iframe)
+            print("[captcha] Switched to challenge iframe")
+            
+            # Step 2: Click audio challenge button
+            audio_btn = driver.find_element(By.ID, "recaptcha-audio-button")
+            audio_btn.click()
+            sleep(2)
+            print("[captcha] Clicked audio challenge button")
+            
+            # Step 3: Get audio URL
+            audio_source = driver.find_element(By.ID, "audio-source")
+            audio_url = audio_source.get_attribute("src")
+            print(f"[captcha] Audio URL obtained")
+            
+            # Step 4: Download and process audio
+            audio_text = self.process_audio(audio_url)
+            
+            if not audio_text:
+                print("[captcha] Failed to process audio, trying again...")
+                # Try to refresh audio
+                refresh_btn = driver.find_element(By.ID, "recaptcha-audio-button")
+                refresh_btn.click()
+                sleep(2)
+                audio_url = driver.find_element(By.ID, "audio-source").get_attribute("src")
+                audio_text = self.process_audio(audio_url)
+            
+            if not audio_text:
+                return False
+            
+            print(f"[captcha] Audio transcribed: {audio_text}")
+            
+            # Step 5: Enter the solution
+            audio_input = driver.find_element(By.ID, "audio-response")
+            audio_input.send_keys(audio_text)
+            sleep(1)
+            
+            # Step 6: Submit the solution
+            verify_btn = driver.find_element(By.ID, "recaptcha-verify-button")
+            verify_btn.click()
+            sleep(3)
+            
+            # Step 7: Switch back to default content
+            driver.switch_to.default_content()
+            
+            # Step 8: Verify if solved
+            if self.check_captcha_solved(driver):
+                print("[captcha] ✅ Audio challenge solved successfully!")
+                return True
+            else:
+                print("[captcha] Audio challenge may not have solved correctly")
+                return False
+                
+        except Exception as e:
+            print(f"[captcha] Error in audio challenge: {e}")
+            driver.switch_to.default_content()
+            return False
+
+    def process_audio(self, audio_url):
+        """
+        Download audio and convert to text using speech recognition
+        """
+        try:
+            print("[captcha] Downloading audio file...")
+            
+            # Download audio
+            response = requests.get(audio_url, headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            })
+            
+            if response.status_code != 200:
+                print(f"[captcha] Failed to download audio: {response.status_code}")
+                return None
+            
+            # Save audio file
+            with open("captcha_audio.mp3", "wb") as f:
+                f.write(response.content)
+            
+            print("[captcha] Audio downloaded, converting to WAV...")
+            
+            # Convert MP3 to WAV
+            audio = AudioSegment.from_mp3("captcha_audio.mp3")
+            audio.export("captcha_audio.wav", format="wav")
+            
+            print("[captcha] Converting speech to text...")
+            
+            # Use Google Speech Recognition
+            recognizer = sr.Recognizer()
+            with sr.AudioFile("captcha_audio.wav") as source:
+                audio_data = recognizer.record(source)
+                text = recognizer.recognize_google(audio_data)
+            
+            # Clean up files
+            if os.path.exists("captcha_audio.mp3"):
+                os.remove("captcha_audio.mp3")
+            if os.path.exists("captcha_audio.wav"):
+                os.remove("captcha_audio.wav")
+            
+            # Clean the text (remove extra spaces, keep only numbers and words)
+            cleaned_text = re.sub(r'[^0-9a-zA-Z\s]', '', text)
+            cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
+            
+            return cleaned_text
+            
+        except Exception as e:
+            print(f"[captcha] Failed to process audio: {e}")
+            # Clean up files if they exist
+            for file in ["captcha_audio.mp3", "captcha_audio.wav"]:
+                if os.path.exists(file):
+                    os.remove(file)
+            return None
+
+    def check_captcha_solved(self, driver):
+        """
+        Check if reCAPTCHA was solved successfully
+        """
+        try:
+            # Look for the checkbox iframe
+            iframe = driver.find_element(By.XPATH, "//iframe[contains(@src, 'recaptcha/api2/anchor')]")
+            driver.switch_to.frame(iframe)
+            
+            # Check if checkbox is checked
+            checkbox = driver.find_element(By.ID, "recaptcha-anchor")
+            is_checked = checkbox.get_attribute("aria-checked") == "true"
+            
+            driver.switch_to.default_content()
+            return is_checked
+            
+        except:
+            driver.switch_to.default_content()
+            return False
+
+    # ============ MODIFIED CREATE USER METHOD ============
+    
+    def create_invited_user(self):
+        first_name = self.random_name("first")
+        last_name = self.random_name("last")
+        password = "Tha cha 098!"
+
+        first_name_input = self.mail_wait.until(EC.element_to_be_clickable(self.FIRST_NAME_INPUT))
+        self.set_input_value(first_name_input, first_name, driver=self.mail_driver)
+
+        last_name_input = self.mail_wait.until(EC.element_to_be_clickable(self.LAST_NAME_INPUT))
+        self.set_input_value(last_name_input, last_name, driver=self.mail_driver)
+
+        password_inputs = self.mail_wait.until(EC.presence_of_all_elements_located(self.PASSWORD_INPUTS))
+        for password_input in password_inputs:
+            if password_input.is_displayed() and password_input.is_enabled():
+                self.set_input_value(password_input, password, driver=self.mail_driver)
+
+        # ⭐ SOLVE RECAPTCHA HERE ⭐
+        print("[captcha] Attempting to solve reCAPTCHA...")
+        if self.solve_recaptcha(self.mail_driver):
+            print("[captcha] ✅ reCAPTCHA solved successfully!")
+        else:
+            print("[captcha] ⚠️ reCAPTCHA solving failed, attempting to continue...")
+
+        # Click create user button
+        self.mail_wait.until(EC.element_to_be_clickable(self.CREATE_USER_BTN)).click()
+        print(f"[email] ✅ Created invited user: {first_name} {last_name}")
+        sleep(2)
