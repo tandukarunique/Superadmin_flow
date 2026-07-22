@@ -1,5 +1,3 @@
-
-
 import os
 import random
 import re
@@ -47,6 +45,7 @@ class Email(LoginPage):
 
     INVITE_SENDER = "noreply@chatboq.com"
     INVITE_SUBJECT = "Invitation to Join Chatboq SuperAdmin"
+    RESET_SUBJECT = "Super Admin Password Reset Request"
     TEST_PASSWORD = "Tha cha 098!"
 
     def __init__(self, driver):
@@ -232,6 +231,56 @@ class Email(LoginPage):
             print("[captcha] reCAPTCHA detected, attempting to solve...")
             self.solve_recaptcha(driver=self.mail_driver)
             sleep(2)
+
+    def _wait_for_reset_email(self, timeout_seconds=90):
+
+        print(f"[email] waiting for reset email from {self.INVITE_SENDER}...")
+        deadline = time.time() + timeout_seconds
+
+        while time.time() < deadline:
+            self.mail_driver.execute_script(
+                "if (typeof GRML !== 'undefined' && GRML.check_email) { GRML.check_email(); }"
+            )
+            sleep(2)
+
+            row = self.mail_driver.execute_script(
+                """
+                const rows = document.querySelectorAll('.mail_row');
+                const sender = arguments[0].toLowerCase();
+                const subject = arguments[1].toLowerCase();
+                for (const row of rows) {
+                    const text = row.innerText.toLowerCase();
+                    if (text.includes(sender) && text.includes(subject)) return row;
+                }
+                return null;
+                """,
+                self.INVITE_SENDER, self.RESET_SUBJECT,
+            )
+            if row:
+                self.mail_driver.execute_script("arguments[0].click();", row)
+                sleep(2)
+                return True
+            sleep(3)
+
+        return False
+                
+    def _find_reset_link(self):
+           
+            sleep(5)
+            return self.mail_driver.execute_script(
+                """
+                const keywords = ['chatboq', 'reset', 'password', 'token'];
+                for (const link of document.querySelectorAll('#display_email a[href], .mail_body a[href]')) {
+                    const href = link.href.toLowerCase();
+                    const text = link.innerText.toLowerCase();
+                    if (keywords.some(k => href.includes(k)) || text.includes('reset') || text.includes('password')) {
+                        return link.href;
+                    }
+                }
+                return null;
+                """
+           )
+    
 
     def solve_recaptcha(self, driver=None):
         driver = driver or self.driver

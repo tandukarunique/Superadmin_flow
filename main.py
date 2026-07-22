@@ -61,21 +61,29 @@ def main():
             
             #User management
             user = Userflow(driver)
-            admin_window = driver.current_window_handle
-            driver.execute_script("window.open('');")
-            driver.switch_to.window(driver.window_handles[-1])
-            user.prepare_random_email()
-            driver.switch_to.window(admin_window)
+            #admin_window = driver.current_window_handle
+            #driver.execute_script("window.open('');")
+            #driver.switch_to.window(driver.window_handles[-1])
+            #user.prepare_random_email()
+            #driver.switch_to.window(admin_window)
             
             user.go_to_user_management()
-            user.invite_user()
-            user.select_role()
-            user.accept_invite()
+            #user.invite_user()
+            #user.select_role()
+            #user.accept_invite()
+            #user.register_at_last()
+            #sleep(5)
+            #user.login_registered_user()
+            #user.close_invite_tabs_and_return(admin_window)
             #user.user_filters()
-            user.register_at_last()
-            sleep(1)
-            user.login_registered_user()
-            sleep(10)
+            #user.action_btn()
+            #user.search()
+            #user.view_profile()
+            user.reset_password()
+            user.open_mail_for_reset()
+            user.open_reset_mail()
+            user.input_new_password()
+            
     
         else:
             print("❌ Login failed!")
